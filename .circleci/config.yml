@@ -1,36 +1,55 @@
-# Use the latest 2.1 version of CircleCI pipeline process engine.
-# See: https://circleci.com/docs/2.0/configuration-reference
-version: 2.1
+version: 2.0
 
-# Define a job to be invoked later in a workflow.
-# See: https://circleci.com/docs/2.0/configuration-reference/#jobs
 jobs:
-  # Below is the definition of your job to build and test your app, you can rename and customize it as you want.
-  build-and-test:
-    # These next lines define a Docker executor: https://circleci.com/docs/2.0/executor-types/
-    # You can specify an image from Dockerhub or use one of our Convenience Images from CircleCI's Developer Hub.
-    # Be sure to update the Docker image tag below to openjdk version of your application.
-    # A list of available CircleCI Docker Convenience Images are available here: https://circleci.com/developer/images/image/cimg/openjdk
+  test:
+    parallelism: 2
     docker:
-      - image: cimg/openjdk:11.0
-    # Add steps to the job
-    # See: https://circleci.com/docs/2.0/configuration-reference/#steps
-    # working_directory: /tmp
+      - image: cimg/openjdk:17.0.1
+        auth:
+          username: mydockerhub-user
+          password: $DOCKERHUB_PASSWORD  # context / project UI env-var reference
     steps:
-      # Checkout the code as the first step.
       - checkout
-      # Added step to fix CCI bug per https://github.com/cognitect-labs/test-runner/issues/23
-      - run:
-          name: Get rid of erroneous git config
-          command: rm -rf ~/.gitconfig
-      # Use mvn clean and package as the standard maven build phase
-      - run:
-          name: Build
-          command: mvn -B -DskipTests clean package
-      # Then run your tests!
-      - run:
-          name: Test
-          command: mvn test
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "pom.xml" }}
+            - v1-dependencies-
+      - attach_workspace:
+          at: ./target
+      - run: |
+            ./mvnw \
+            -Dtest=$(for file in $(circleci tests glob "src/test/**/**.java" \
+            | circleci tests split --split-by=timings); \
+            do basename $file \
+            | sed -e "s/.java/,/"; \
+            done | tr -d '\r\n') \
+            -e test verify
+      - store_test_results:
+          path: target/surefire-reports
+      - store_artifacts:
+          path: target/site/jacoco/index.html
+
+  build:
+    docker:
+      - image: cimg/openjdk:17.0.1
+        auth:
+          username: mydockerhub-user
+          password: $DOCKERHUB_PASSWORD  # context / project UI env-var reference
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "pom.xml" }}
+            - v1-dependencies-
+      - run: ./mvnw -Dmaven.test.skip=true package
+      - save_cache:
+          paths:
+            - ~/.m2
+          key: v1-dependencies-{{ checksum "pom.xml" }}
+      - persist_to_workspace:
+         root: ./
+         paths:
+           - target/
       # Adding steps to store artifacts
       - run:
          name: Creating Dummy Artifacts
@@ -43,11 +62,12 @@ jobs:
           destination: artifact-file
       - store_artifacts:
           path: /tmp/artifacts
-
-# Invoke jobs via workflows
-# See: https://circleci.com/docs/2.0/configuration-reference/#workflows
 workflows:
-  sample: # This is the name of the workflow, feel free to change it to better match your workflow.
-    # Inside the workflow, you define the jobs you want to run.
+  version: 2
+
+  build-then-test:
     jobs:
-      - build-and-test
+      - build
+      - test:
+          requires:
+            - build
