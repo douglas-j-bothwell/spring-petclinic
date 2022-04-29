@@ -19,6 +19,10 @@ jobs:
     steps:
       # Checkout the code as the first step.
       - checkout
+      # Added step to fix CCI bug per https://github.com/cognitect-labs/test-runner/issues/23
+      - run:
+          name: Get rid of erroneous git config
+          command: rm -rf ~/.gitconfig
       # Use mvn clean and package as the standard maven build phase
       - run:
           name: Build
